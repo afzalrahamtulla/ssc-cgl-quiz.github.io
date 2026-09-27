@@ -10,7 +10,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- PDF.js - Explicit Core and Worker Setup to prevent freezing -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        window.pdfjsLib = window['pdfjs-dist/build/pdf'];
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
     <style>
@@ -254,7 +261,7 @@
                         <div id="structure-spinner" class="spinner ml-3 hide text-white"></div>
                     </button>
                     
-                    <button onclick="saveMaterial()" class="w-full sm:w-auto px-8 py-3.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 shadow-lg transition-all flex items-center justify-center active:scale-95">
+                    <button id="btn-save-material" onclick="saveMaterial()" class="w-full sm:w-auto px-8 py-3.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 shadow-lg transition-all flex items-center justify-center active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed">
                         <span id="btn-save-material-text">Upload & Save</span>
                         <div id="save-material-spinner" class="spinner ml-3 hide text-white"></div>
                     </button>
@@ -507,13 +514,14 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, doc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
         // Global Constraints
         const appId = 'ssc-cgl-prep-app';
         
-        // 1. Hardcoded Firebase Config (As requested)
+        // Hardcoded Firebase Config
         const firebaseConfig = {
             apiKey: "AIzaSyDde9x9Bkz50Ed49QYFkomFwBP0qNi7r3s",
             authDomain: "ssc-cgl-quiz.firebaseapp.com",
@@ -521,9 +529,10 @@
             storageBucket: "ssc-cgl-quiz.firebasestorage.app",
             messagingSenderId: "543236382304",
             appId: "1:543236382304:web:248685272578eac6d0ed05",
+            measurementId: "G-K3ZG1LKY66"
         };
 
-        let app, db, auth;
+        let app, db, auth, analytics;
         let currentUser = null;
         
         // App State
@@ -537,13 +546,6 @@
             extractedMaterialText: "" 
         };
 
-        // PDF.js configuration - explicitly setting worker to avoid silent freezes
-        try {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        } catch (e) {
-            console.error("Failed to initialize PDF.js worker:", e);
-        }
-        
         // UI Helpers
         window.togglePassword = function(id) {
             const input = document.getElementById(id);
@@ -595,40 +597,37 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        // Settings Logic (LocalStorage tied to User)
+        // Settings Logic (LocalStorage Safely handled)
         function loadSettingsForUser(uid) {
-            document.getElementById('api-key').value = localStorage.getItem(`gemini_key_${uid}`) || '';
-            document.getElementById('cloud-name').value = localStorage.getItem(`cloud_name_${uid}`) || '';
-            document.getElementById('cloud-preset').value = localStorage.getItem(`cloud_preset_${uid}`) || '';
-            
-            if (!getGeminiKey()) {
-                document.getElementById('api-key-warning')?.classList.remove('hide');
-            } else {
-                document.getElementById('api-key-warning')?.classList.add('hide');
+            try {
+                document.getElementById('api-key').value = localStorage.getItem(`gemini_key_${uid}`) || '';
+                document.getElementById('cloud-name').value = localStorage.getItem(`cloud_name_${uid}`) || '';
+                document.getElementById('cloud-preset').value = localStorage.getItem(`cloud_preset_${uid}`) || '';
+            } catch(e) {
+                console.warn("Storage restricted", e);
             }
         }
 
         document.getElementById('btn-save-settings').addEventListener('click', () => {
             if(!currentUser) return;
-            localStorage.setItem(`gemini_key_${currentUser.uid}`, document.getElementById('api-key').value.trim());
-            localStorage.setItem(`cloud_name_${currentUser.uid}`, document.getElementById('cloud-name').value.trim());
-            localStorage.setItem(`cloud_preset_${currentUser.uid}`, document.getElementById('cloud-preset').value.trim());
-            
-            showModal("Success", "Configuration securely saved to browser storage.", "success");
-            
-            if(getGeminiKey()) document.getElementById('api-key-warning')?.classList.add('hide');
-            else document.getElementById('api-key-warning')?.classList.remove('hide');
+            try {
+                localStorage.setItem(`gemini_key_${currentUser.uid}`, document.getElementById('api-key').value.trim());
+                localStorage.setItem(`cloud_name_${currentUser.uid}`, document.getElementById('cloud-name').value.trim());
+                localStorage.setItem(`cloud_preset_${currentUser.uid}`, document.getElementById('cloud-preset').value.trim());
+                showModal("Success", "Configuration securely saved to browser storage.", "success");
+            } catch (e) {
+                showModal("Storage Blocked", "Your browser is blocking LocalStorage. Please disable Tracking Prevention.", "error");
+            }
         });
 
         function getGeminiKey() { return currentUser ? localStorage.getItem(`gemini_key_${currentUser.uid}`) || '' : ''; }
         function getCloudName() { return currentUser ? localStorage.getItem(`cloud_name_${currentUser.uid}`) || '' : ''; }
         function getCloudPreset() { return currentUser ? localStorage.getItem(`cloud_preset_${currentUser.uid}`) || '' : ''; }
 
-        
-        // 2. Initialize Firebase
         async function initApp() {
             try {
                 app = initializeApp(firebaseConfig);
+                try { analytics = getAnalytics(app); } catch (e) { /* Analytics optional */ }
                 db = getFirestore(app);
                 auth = getAuth(app);
 
@@ -652,7 +651,7 @@
             } catch (error) {
                 console.error("Firebase Init Error:", error);
                 document.getElementById('initial-loader').classList.add('hide');
-                showModal("System Error", "Failed to initialize secure connection.", "error");
+                showModal("System Error", "Failed to initialize secure connection. Check your Firebase Config keys.", "error");
             }
         }
 
@@ -697,14 +696,12 @@
             if(auth) await signOut(auth);
         }
 
-        // Setup real-time listeners for exact data synchronization
         let unsubMaterials, unsubQuizzes, unsubAttempts;
 
         function setupRealtimeListeners() {
             if (!currentUser || !db) return;
             const uid = currentUser.uid;
             
-            // Path strictness Rule #1 enforced here:
             const materialsRef = collection(db, 'artifacts', appId, 'users', uid, 'materials');
             const quizzesRef = collection(db, 'artifacts', appId, 'users', uid, 'quizzes');
             const attemptsRef = collection(db, 'artifacts', appId, 'users', uid, 'attempts');
@@ -713,7 +710,6 @@
             unsubMaterials = onSnapshot(materialsRef, 
                 (snapshot) => {
                     window.appState.materials = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    // Sort in memory to avoid complex query indexing requirement (Rule 2)
                     window.appState.materials.sort((a, b) => b.createdAt - a.createdAt);
                     if(!document.getElementById('view-materials').classList.contains('hide')) renderMaterials();
                 }, 
@@ -742,59 +738,58 @@
         }
 
         async function extractTextFromPDF(file) {
-            try {
-                const arrayBuffer = await file.arrayBuffer();
-                const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-                let fullText = "";
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
-                    fullText += textContent.items.map(item => item.str).join(" ") + "\n";
+            return new Promise(async (resolve, reject) => {
+                // Failsafe timeout to prevent silent freezing
+                const timeout = setTimeout(() => {
+                    reject(new Error("PDF reading timed out. Your browser might be blocking web workers."));
+                }, 15000);
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    let fullText = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        fullText += textContent.items.map(item => item.str).join(" ") + "\n";
+                    }
+                    clearTimeout(timeout);
+                    resolve(fullText);
+                } catch(e) {
+                    clearTimeout(timeout);
+                    console.error("PDF extraction error:", e);
+                    reject(new Error(`PDF parse failed for ${file.name}.`));
                 }
-                return fullText;
-            } catch(e) {
-                console.error("PDF extraction error:", e);
-                throw new Error(`PDF parse failed for ${file.name}. Your browser might be blocking the PDF reader. Try disabling tracking prevention/shields.`);
-            }
+            });
         }
 
-        async function uploadToCloudinary(file) {
-            const cloudName = getCloudName();
-            const uploadPreset = getCloudPreset();
-            
-            if (!cloudName || !uploadPreset) {
-                throw new Error("Missing Cloudinary credentials in Settings.");
-            }
-
+        async function uploadToCloudinary(file, cName, cPreset) {
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('upload_preset', uploadPreset);
+            formData.append('upload_preset', cPreset);
 
-            const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+            const res = await fetch(`https://api.cloudinary.com/v1_1/${cName}/auto/upload`, {
                 method: 'POST',
                 body: formData
             });
 
             if (!res.ok) {
                 const errorData = await res.json();
-                throw new Error(errorData.error?.message || "Cloudinary upload failed");
+                throw new Error(errorData.error?.message || "Cloudinary upload failed (Check preset settings)");
             }
 
             const data = await res.json();
             return { url: data.secure_url, type: data.resource_type, name: file.name };
         }
 
-        // Extract textual context from all files for the AI
-        async function buildAiContextFromFiles(files) {
+        async function buildAiContextFromFiles(files, cName, cPreset) {
             let extractedText = "";
             let fileUploads = [];
 
             for (const file of files) {
-                // Upload physical file to external cloud provider
-                const cloudData = await uploadToCloudinary(file);
+                const cloudData = await uploadToCloudinary(file, cName, cPreset);
                 fileUploads.push(cloudData);
 
-                // For PDFs, we need to extract text locally so Gemini can read it (since Cloudinary URLs are just files)
                 if (file.type === 'application/pdf') {
                     const text = await extractTextFromPDF(file);
                     extractedText += `\n--- Contents of ${file.name} ---\n${text}\n`;
@@ -814,12 +809,94 @@
             });
         });
 
+        window.saveMaterial = async function() {
+            if (!currentUser) return;
+            const title = document.getElementById('material-title').value.trim();
+            const content = document.getElementById('material-content').value.trim();
+            const structuredContent = document.getElementById('structured-raw').value.trim();
+            const fileInput = document.getElementById('material-files');
+            const spinner = document.getElementById('save-material-spinner');
+            const btnText = document.getElementById('btn-save-material-text');
+            const saveBtn = document.getElementById('btn-save-material');
+            
+            if(!title) {
+                showModal("Title Required", "Please provide a material title.", "warning");
+                return;
+            }
+
+            // SAFELY check local storage to prevent Tracking Prevention crash
+            let cloudName, uploadPreset;
+            try {
+                cloudName = getCloudName();
+                uploadPreset = getCloudPreset();
+                
+                if (fileInput.files.length > 0 && (!cloudName || !uploadPreset)) {
+                    showModal("Cloud Credentials Missing", "Please configure your Cloudinary Cloud Name and Upload Preset in the Settings tab before uploading files.", "error");
+                    return;
+                }
+            } catch (storageErr) {
+                showModal("Storage Blocked", "Your browser's Tracking Prevention is blocking access to storage. Please disable 'Strict Tracking Prevention', turn off Shields, or use Chrome.", "error");
+                return;
+            }
+            
+            // Lock UI safely
+            saveBtn.disabled = true;
+            spinner.classList.remove('hide');
+            btnText.textContent = "Processing...";
+            
+            try {
+                let finalExtractedText = "";
+                let uploadedFiles = [];
+                
+                if (fileInput.files.length > 0) {
+                    btnText.textContent = "Reading & Uploading Files...";
+                    const processResult = await buildAiContextFromFiles(fileInput.files, cloudName, uploadPreset);
+                    finalExtractedText = processResult.extractedText;
+                    uploadedFiles = processResult.fileUploads;
+                }
+
+                btnText.textContent = "Saving to Database...";
+                const materialDoc = {
+                    title,
+                    content,
+                    structuredContent,
+                    extractedText: finalExtractedText, 
+                    cloudFiles: uploadedFiles,
+                    createdAt: Date.now()
+                };
+
+                await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'materials'), materialDoc);
+                
+                // Reset form
+                document.getElementById('material-title').value = '';
+                document.getElementById('material-content').value = '';
+                fileInput.value = '';
+                document.getElementById('material-file-preview').innerHTML = '';
+                document.getElementById('structured-raw').value = '';
+                document.getElementById('structured-preview-container').classList.add('hide');
+                document.getElementById('new-material-form').classList.add('hide');
+                
+                showModal("Saved", "Material & Files uploaded securely.", "success");
+            } catch(e) {
+                console.error("Save Material Error:", e);
+                showModal("Upload Failed", e.message || "Failed to save. Check your Cloudinary preset or Tracking Prevention.", "error");
+            } finally {
+                // ALWAYS RESET THE BUTTON (Fixes the stuck loading bug)
+                saveBtn.disabled = false;
+                spinner.classList.add('hide');
+                btnText.textContent = "Upload & Save";
+            }
+        }
 
         window.structureMaterialWithAI = async function() {
             const title = document.getElementById('material-title').value.trim();
             const textContent = document.getElementById('material-content').value.trim();
             const fileInput = document.getElementById('material-files');
-            const apiKey = getGeminiKey();
+            
+            let apiKey;
+            try { apiKey = getGeminiKey(); } catch(e) { 
+                showModal("Storage Blocked", "Browser tracking prevention is active.", "error"); return; 
+            }
 
             if (!apiKey) {
                 showModal("API Key Required", "Set Google Gemini API key in Settings.", "error");
@@ -834,7 +911,6 @@
             btnSpinner.classList.remove('hide');
 
             try {
-                // For structure feature, we just need text. We won't upload to Cloudinary until 'Save' is clicked to avoid junk uploads if they cancel.
                 let extractedText = "";
                 for (const file of fileInput.files) {
                     if (file.type === 'application/pdf') {
@@ -843,7 +919,6 @@
                 }
                 
                 const combinedText = `Title: ${title}\nNotes:\n${textContent}\nFiles:\n${extractedText}`;
-                
                 const prompt = `Act as an elite SSC CGL tutor. Analyze the following study material and organize it into a comprehensive Markdown structure. Extract formulas, key dates, rules, and concepts. Do not lose data. Format with clear headers.\n\nMaterial:\n${combinedText}`;
 
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
@@ -866,75 +941,6 @@
                 showModal("AI Error", error.message, "error");
             } finally {
                 btnSpinner.classList.add('hide');
-            }
-        }
-
-        window.saveMaterial = async function() {
-            if (!currentUser) return;
-            const title = document.getElementById('material-title').value.trim();
-            const content = document.getElementById('material-content').value.trim();
-            const structuredContent = document.getElementById('structured-raw').value.trim();
-            const fileInput = document.getElementById('material-files');
-            const spinner = document.getElementById('save-material-spinner');
-            const btnText = document.getElementById('btn-save-material-text');
-            
-            if(!title) {
-                showModal("Title Required", "Please provide a material title.", "warning");
-                return;
-            }
-
-            // Pre-check Cloudinary credentials if uploading files
-            if (fileInput.files.length > 0) {
-                if (!getCloudName() || !getCloudPreset()) {
-                    showModal("Cloud Credentials Missing", "Please configure your Cloudinary Cloud Name and Upload Preset in the Settings tab before uploading files.", "error");
-                    return;
-                }
-            }
-            
-            spinner.classList.remove('hide');
-            btnText.textContent = "Uploading & Saving...";
-            
-            try {
-                // 1. Process files and upload to external cloud
-                let finalExtractedText = "";
-                let uploadedFiles = [];
-                
-                if (fileInput.files.length > 0) {
-                    const processResult = await buildAiContextFromFiles(fileInput.files);
-                    finalExtractedText = processResult.extractedText;
-                    uploadedFiles = processResult.fileUploads;
-                }
-
-                // 2. Save metadata and URLs to Firestore
-                const materialDoc = {
-                    title,
-                    content,
-                    structuredContent,
-                    extractedText: finalExtractedText, // Save for future quiz gen
-                    cloudFiles: uploadedFiles,
-                    createdAt: Date.now()
-                };
-
-                await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'materials'), materialDoc);
-                
-                // Reset form
-                document.getElementById('material-title').value = '';
-                document.getElementById('material-content').value = '';
-                fileInput.value = '';
-                document.getElementById('material-file-preview').innerHTML = '';
-                document.getElementById('structured-raw').value = '';
-                document.getElementById('structured-preview-container').classList.add('hide');
-                document.getElementById('new-material-form').classList.add('hide');
-                
-                showModal("Saved", "Material & Files uploaded securely.", "success");
-            } catch(e) {
-                console.error("Save Material Error:", e);
-                // Ensure UI catches browser tracking blocks cleanly
-                showModal("Upload Failed", e.message || "Failed to save. If you are using Brave/Edge, try disabling tracking prevention/shields for this site.", "error");
-            } finally {
-                // This guarantees the button ALWAYS resets, no matter what crashed
-                spinner.classList.add('hide');
-                btnText.textContent = "Upload & Save";
             }
         }
 
@@ -996,19 +1002,18 @@
             }
         }
 
-
         document.getElementById('btn-generate-quiz').addEventListener('click', async () => {
             const text = document.getElementById('study-notes').value.trim();
             const numQs = parseInt(document.getElementById('quiz-num-questions').value, 10);
             const isReattempt = document.getElementById('is-reattempt').value === "true";
-            const apiKey = getGeminiKey();
             
-            if (!apiKey) {
-                showModal("API Key Required", "Set Gemini API key in Settings.", "error"); return;
+            let apiKey;
+            try { apiKey = getGeminiKey(); } catch(e) { 
+                showModal("Storage Blocked", "Browser tracking prevention active.", "error"); return; 
             }
-            if (!text) {
-                showModal("Empty Request", "Provide source text.", "warning"); return;
-            }
+            
+            if (!apiKey) { showModal("API Key Required", "Set Gemini API key in Settings.", "error"); return; }
+            if (!text) { showModal("Empty Request", "Provide source text.", "warning"); return; }
 
             const btn = document.getElementById('btn-generate-quiz');
             const spinner = document.getElementById('btn-generate-spinner');
@@ -1017,7 +1022,6 @@
             btn.disabled = true; spinner.classList.remove('hide'); status.classList.remove('hide');
 
             try {
-                // If it's a reattempt, use a high temperature to force new unique questions.
                 const temp = isReattempt ? 1.0 : 0.6; 
                 
                 const systemPrompt = `You are generating a strict JSON output for an SSC CGL exam practice test.
@@ -1060,13 +1064,12 @@
 
                 if (!quizData.questions || quizData.questions.length === 0) throw new Error("AI output invalid.");
 
-                // Save to Firestore History
-                if (currentUser && !isReattempt) { // don't duplicate history source if reattempting
+                if (currentUser && !isReattempt) { 
                     await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'quizzes'), {
                         subject: quizData.subject,
                         topic: quizData.topic,
                         questionCount: quizData.questions.length,
-                        sourceText: text, // Storing for future re-attempts
+                        sourceText: text,
                         createdAt: Date.now()
                     });
                 }
@@ -1079,7 +1082,6 @@
                 btn.disabled = false; spinner.classList.add('hide'); status.classList.add('hide');
             }
         });
-
 
         function startQuiz(quiz) {
             window.appState.currentQuiz = quiz;
@@ -1198,7 +1200,6 @@
             navigateTo('quiz-results');
         }
 
-
         function renderLibrary() {
             const grid = document.getElementById('library-grid');
             const empty = document.getElementById('library-empty');
@@ -1228,7 +1229,7 @@
                 
                 card.querySelector('.btn-gen-fresh').addEventListener('click', () => {
                     document.getElementById('study-notes').value = quiz.sourceText;
-                    document.getElementById('is-reattempt').value = "true"; // Triggers high temp
+                    document.getElementById('is-reattempt').value = "true"; 
                     navigateTo('create');
                     showModal("Fresh Generation Ready", "Click Generate Quiz. AI will use a high creativity setting to guarantee new questions on this topic.", "info");
                 });
