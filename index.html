@@ -537,9 +537,12 @@
             extractedMaterialText: "" 
         };
 
-        // PDF.js configuration
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
+        // PDF.js configuration - explicitly setting worker to avoid silent freezes
+        try {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        } catch (e) {
+            console.error("Failed to initialize PDF.js worker:", e);
+        }
         
         // UI Helpers
         window.togglePassword = function(id) {
@@ -738,7 +741,6 @@
             );
         }
 
-        
         async function extractTextFromPDF(file) {
             try {
                 const arrayBuffer = await file.arrayBuffer();
@@ -751,7 +753,8 @@
                 }
                 return fullText;
             } catch(e) {
-                throw new Error(`PDF parse failed for ${file.name}`);
+                console.error("PDF extraction error:", e);
+                throw new Error(`PDF parse failed for ${file.name}. Your browser might be blocking the PDF reader. Try disabling tracking prevention/shields.`);
             }
         }
 
@@ -873,13 +876,24 @@
             const structuredContent = document.getElementById('structured-raw').value.trim();
             const fileInput = document.getElementById('material-files');
             const spinner = document.getElementById('save-material-spinner');
+            const btnText = document.getElementById('btn-save-material-text');
             
             if(!title) {
                 showModal("Title Required", "Please provide a material title.", "warning");
                 return;
             }
+
+            // Pre-check Cloudinary credentials if uploading files
+            if (fileInput.files.length > 0) {
+                if (!getCloudName() || !getCloudPreset()) {
+                    showModal("Cloud Credentials Missing", "Please configure your Cloudinary Cloud Name and Upload Preset in the Settings tab before uploading files.", "error");
+                    return;
+                }
+            }
             
             spinner.classList.remove('hide');
+            btnText.textContent = "Uploading & Saving...";
+            
             try {
                 // 1. Process files and upload to external cloud
                 let finalExtractedText = "";
@@ -914,9 +928,13 @@
                 
                 showModal("Saved", "Material & Files uploaded securely.", "success");
             } catch(e) {
-                showModal("Upload Failed", e.message, "error");
+                console.error("Save Material Error:", e);
+                // Ensure UI catches browser tracking blocks cleanly
+                showModal("Upload Failed", e.message || "Failed to save. If you are using Brave/Edge, try disabling tracking prevention/shields for this site.", "error");
             } finally {
+                // This guarantees the button ALWAYS resets, no matter what crashed
                 spinner.classList.add('hide');
+                btnText.textContent = "Upload & Save";
             }
         }
 
